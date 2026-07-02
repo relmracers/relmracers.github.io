@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Leaderboard</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header>
+    <div class="header-brand">
+      <img src="src/Logo.png" alt="Quidient Logo" class="logo">
+      <a href="https://quidient.com/" target="_blank" rel="noopener" class="brand-link">
+        <img src="src/Quidient_Header_LOGO.webp" alt="Quidient" class="header-logo-text">
+      </a>
+    </div>
+    <h1>Leaderboard</h1>
+    <p>Minigame — Live Scores</p>
+  </header>
+
+  <main>
+    <div id="loading">
+      <div class="spinner" aria-label="Loading scores"></div>
+      <p>Loading scores...</p>
+    </div>
+
+    <div id="error" hidden>
+      <p>Could not load scores.</p>
+      <button type="button" id="retry-button">Retry</button>
+    </div>
+
+    <div id="empty" hidden>
+      <p>No scores yet</p>
+    </div>
+
+    <div id="sort-controls" hidden>
+      <button type="button" id="refresh-button" aria-label="Refresh scores">
+        <img src="src/refresh-arrow.png" alt="" width="20" height="20">
+      </button>
+    </div>
+
+    <table id="leaderboard-table" hidden>
+      <thead>
+        <tr>
+          <th scope="col">Rank</th>
+          <th scope="col">Player</th>
+          <th scope="col" style="text-align: right;">Score</th>
+        </tr>
+      </thead>
+      <tbody id="leaderboard-body"></tbody>
+    </table>
+  </main>
+
+  <footer>
+    <a href="https://quidient.com/" target="_blank" rel="noopener" class="footer-brand">
+      <img src="src/Quidient-mini-logo-footer.png" alt="Quidient"> Quidient
+    </a>
+    <span> — Minigame</span>
+  </footer>
+
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
+    import { getFirestore, collection, getDocs, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyBnSJyXgUVsq9RCXi-e2NSqUIapxXfrwPo",
+      authDomain: "quidient-mobile-b411c.firebaseapp.com",
+      projectId: "quidient-mobile-b411c",
+      storageBucket: "quidient-mobile-b411c.firebasestorage.app",
+      messagingSenderId: "1041850708115",
+      appId: "1:1041850708115:web:800e087fe97741b7f85d66"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    const TIMEOUT_MS = 8000;
+    const MAX_ENTRIES = 50;
+
+    let entries = [];
+    let isLoading = false;
+    let hasError = false;
+
+    const loadingEl = document.getElementById('loading');
+    const errorEl = document.getElementById('error');
+    const emptyEl = document.getElementById('empty');
+    const sortControlsEl = document.getElementById('sort-controls');
+    const tableEl = document.getElementById('leaderboard-table');
+    const tbodyEl = document.getElementById('leaderboard-body');
+    const retryButton = document.getElementById('retry-button');
+
+    function setLoading(loading) {
+      isLoading = loading;
+      loadingEl.hidden = !loading;
+      if (loading) {
+        errorEl.hidden = true;
+        emptyEl.hidden = true;
+        sortControlsEl.hidden = true;
+        tableEl.hidden = true;
+      }
+    }
+
+    function setError(error) {
+      hasError = error;
+      errorEl.hidden = !error;
+    }
+
+    function getRankContent(rank) {
+      if (rank === 1) return rank + '<span class="medal" aria-hidden="true">🥇</span>';
+      if (rank === 2) return rank + '<span class="medal" aria-hidden="true">🥈</span>';
+      if (rank === 3) return rank + '<span class="medal" aria-hidden="true">🥉</span>';
+      return String(rank);
+    }
+
+    function render() {
+      tbodyEl.innerHTML = '';
+
+      if (entries.length === 0) {
+        emptyEl.hidden = false;
+        sortControlsEl.hidden = true;
+        tableEl.hidden = true;
+        return;
+      }
+
+      emptyEl.hidden = true;
+      sortControlsEl.hidden = false;
+      tableEl.hidden = false;
+
+      entries.forEach(function (entry, index) {
+        const rank = index + 1;
+        const row = document.createElement('tr');
+
+        const rankCell = document.createElement('td');
+        rankCell.className = 'rank';
+        rankCell.setAttribute('data-label', 'Rank');
+        rankCell.innerHTML = getRankContent(rank);
+
+        const nameCell = document.createElement('td');
+        nameCell.setAttribute('data-label', 'Player');
+        nameCell.textContent = entry.name;
+
+        const scoreCell = document.createElement('td');
+        scoreCell.className = 'score';
+        scoreCell.setAttribute('data-label', 'Score');
+        scoreCell.textContent = entry.score.toLocaleString();
+
+        row.appendChild(rankCell);
+        row.appendChild(nameCell);
+        row.appendChild(scoreCell);
+        tbodyEl.appendChild(row);
+      });
+    }
+
+    function withTimeout(promise, ms) {
+      return new Promise(function (resolve, reject) {
+        const timer = setTimeout(function () {
+          reject(new Error('Request timed out after ' + ms + 'ms'));
+        }, ms);
+        promise.then(
+          function (value) { clearTimeout(timer); resolve(value); },
+          function (err) { clearTimeout(timer); reject(err); }
+        );
+      });
+    }
+
+    async function fetchLeaderboard() {
+      if (isLoading) return;
+      setLoading(true);
+      setError(false);
+
+      try {
+        const leaderboardQuery = query(
+          collection(db, "leaderboard"),
+          where("score", ">", 0),
+          orderBy("score", "desc"),
+          orderBy("name", "asc"),
+          limit(MAX_ENTRIES)
+        );
+        const querySnapshot = await withTimeout(getDocs(leaderboardQuery), TIMEOUT_MS);
+
+        entries = [];
+        querySnapshot.forEach(function (doc) {
+          const data = doc.data();
+          const rawName = typeof data.name === 'string' ? data.name.trim() : '';
+          entries.push({
+            name: rawName || 'Anonymous',
+            score: Number(data.score) || 0
+          });
+        });
+
+        render();
+      } catch (err) {
+        console.error('Leaderboard fetch failed:', err);
+        entries = [];
+        setError(true);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    retryButton.addEventListener('click', fetchLeaderboard);
+    document.getElementById('refresh-button').addEventListener('click', fetchLeaderboard);
+
+    fetchLeaderboard();
+  </script>
+</body>
+</html>
