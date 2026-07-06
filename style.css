@@ -233,7 +233,7 @@ tbody tr:hover { background: rgba(34, 197, 94, 0.15); }
     font-size: 0.75rem;
   }
   .score { text-align: left; }
-  #sort-controls button, #refresh-button { min-height: 44px; }
+  #sort-controls button, #refresh-button, #load-more { min-height: 44px; }
   tbody tr { min-height: 44px; }
 }
 
@@ -258,6 +258,23 @@ tbody tr:hover { background: rgba(34, 197, 94, 0.15); }
 }
 
 #sort-controls { flex-wrap: wrap; }
+
+#load-more {
+  display: block;
+  width: 100%;
+  margin-top: 1rem;
+  padding: 0.75rem 1rem;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#load-more:hover { filter: brightness(1.1); }
+#load-more:disabled { opacity: 0.7; cursor: not-allowed; }
 
 .footer-brand {
   display: inline-flex;

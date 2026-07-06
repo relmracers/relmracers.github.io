@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>User Data</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header>
+    <div class="header-brand">
+      <img src="src/Logo.png" alt="Quidient Logo" class="logo">
+      <a href="https://quidient.com/" target="_blank" rel="noopener" class="brand-link">
+        <img src="src/Quidient_Header_LOGO.webp" alt="Quidient" class="header-logo-text">
+      </a>
+    </div>
+    <h1>User Data</h1>
+    <p>Registered users</p>
+  </header>
+
+  <main>
+    <div id="loading">
+      <div class="spinner" aria-label="Loading"></div>
+      <p id="loading-text">Loading users...</p>
+    </div>
+
+    <div id="error" hidden>
+      <p id="error-text">Could not load users.</p>
+      <button type="button" id="retry-button">Retry</button>
+    </div>
+
+    <div id="empty" hidden>
+      <p id="empty-text">No users yet</p>
+    </div>
+
+    <div id="sort-controls" hidden>
+      <button type="button" id="refresh-button" aria-label="Refresh users">
+        <img src="src/refresh-arrow.png" alt="" width="20" height="20">
+      </button>
+    </div>
+
+    <table id="users-table" hidden>
+      <thead>
+        <tr id="users-header-row">
+          <th scope="col">Name</th>
+          <th scope="col">Email</th>
+        </tr>
+      </thead>
+      <tbody id="users-body"></tbody>
+    </table>
+
+    <button type="button" id="load-more" hidden>Load more</button>
+  </main>
+
+  <footer>
+    <a href="https://quidient.com/" target="_blank" rel="noopener" class="footer-brand">
+      <img src="src/Quidient-mini-logo-footer.png" alt="Quidient"> Quidient
+    </a>
+    <span id="footer-text"> — Admin view</span>
+  </footer>
+
+  <!--
+    Standalone users view.
+    This file replaces the routed version in index.html because the static host
+    returns 404 for the /user-data path, so a dedicated HTML file is required.
+  -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
+    import { getFirestore, collection, getDocs, query, orderBy, limit, startAfter } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyBnSJyXgUVsq9RCXi-e2NSqUIapxXfrwPo",
+      authDomain: "quidient-mobile-b411c.firebaseapp.com",
+      projectId: "quidient-mobile-b411c",
+      storageBucket: "quidient-mobile-b411c.firebasestorage.app",
+      messagingSenderId: "1041850708115",
+      appId: "1:1041850708115:web:800e087fe97741b7f85d66"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    const TIMEOUT_MS = 8000;
+    const MAX_ENTRIES = 50;
+
+    let entries = [];
+    let isFetching = false;
+    let hasError = false;
+    let lastDoc = null;
+    let hasMore = false;
+
+    const loadingEl = document.getElementById('loading');
+    const errorEl = document.getElementById('error');
+    const emptyEl = document.getElementById('empty');
+    const sortControlsEl = document.getElementById('sort-controls');
+    const tableEl = document.getElementById('users-table');
+    const tbodyEl = document.getElementById('users-body');
+    const retryButton = document.getElementById('retry-button');
+    const refreshButton = document.getElementById('refresh-button');
+    const loadMoreBtn = document.getElementById('load-more');
+
+    function setFullLoading(loading) {
+      loadingEl.hidden = !loading;
+      if (loading) {
+        errorEl.hidden = true;
+        emptyEl.hidden = true;
+        sortControlsEl.hidden = true;
+        tableEl.hidden = true;
+        loadMoreBtn.hidden = true;
+      }
+    }
+
+    function setError(error) {
+      hasError = error;
+      errorEl.hidden = !error;
+      if (error) {
+        loadMoreBtn.hidden = true;
+      }
+    }
+
+    function updateLoadMoreButton() {
+      loadMoreBtn.hidden = entries.length === 0 || !hasMore || hasError;
+      loadMoreBtn.disabled = false;
+      loadMoreBtn.textContent = 'Load more';
+    }
+
+    function renderUsers() {
+      tbodyEl.innerHTML = '';
+
+      if (entries.length === 0) {
+        emptyEl.hidden = false;
+        sortControlsEl.hidden = true;
+        tableEl.hidden = true;
+        loadMoreBtn.hidden = true;
+        return;
+      }
+
+      emptyEl.hidden = true;
+      sortControlsEl.hidden = false;
+      tableEl.hidden = false;
+
+      entries.forEach(function (entry) {
+        const row = document.createElement('tr');
+
+        const nameCell = document.createElement('td');
+        nameCell.setAttribute('data-label', 'Name');
+        nameCell.textContent = entry.name;
+
+        const emailCell = document.createElement('td');
+        emailCell.setAttribute('data-label', 'Email');
+        emailCell.textContent = entry.email;
+
+        row.appendChild(nameCell);
+        row.appendChild(emailCell);
+        tbodyEl.appendChild(row);
+      });
+
+      updateLoadMoreButton();
+    }
+
+    function withTimeout(promise, ms) {
+      return new Promise(function (resolve, reject) {
+        const timer = setTimeout(function () {
+          reject(new Error('Request timed out after ' + ms + 'ms'));
+        }, ms);
+        promise.then(
+          function (value) { clearTimeout(timer); resolve(value); },
+          function (err) { clearTimeout(timer); reject(err); }
+        );
+      });
+    }
+
+    async function loadUsers(reset) {
+      if (isFetching) return;
+      isFetching = true;
+
+      if (reset) {
+        entries = [];
+        lastDoc = null;
+        hasMore = false;
+        setFullLoading(true);
+      } else {
+        loadMoreBtn.disabled = true;
+        loadMoreBtn.textContent = 'Loading...';
+      }
+      setError(false);
+
+      try {
+        const constraints = [
+          orderBy("name", "asc"),
+          limit(MAX_ENTRIES)
+        ];
+        if (lastDoc) {
+          constraints.push(startAfter(lastDoc));
+        }
+        const usersQuery = query(collection(db, "leaderboard"), ...constraints);
+        const querySnapshot = await withTimeout(getDocs(usersQuery), TIMEOUT_MS);
+
+        querySnapshot.forEach(function (doc) {
+          const data = doc.data();
+          const rawName = typeof data.name === 'string' ? data.name.trim() : '';
+          const rawMail = typeof data.mail === 'string' ? data.mail.trim() : '';
+          entries.push({
+            name: rawName || 'Anonymous',
+            email: rawMail || '—'
+          });
+        });
+
+        lastDoc = querySnapshot.docs[querySnapshot.docs.length - 1] || null;
+        hasMore = querySnapshot.docs.length === MAX_ENTRIES;
+
+        renderUsers();
+      } catch (err) {
+        console.error('User data fetch failed:', err);
+        if (reset) {
+          entries = [];
+        }
+        setError(true);
+      } finally {
+        isFetching = false;
+        if (reset) {
+          setFullLoading(false);
+        }
+        updateLoadMoreButton();
+      }
+    }
+
+    retryButton.addEventListener('click', function () {
+      loadUsers(true);
+    });
+    refreshButton.addEventListener('click', function () {
+      loadUsers(true);
+    });
+    loadMoreBtn.addEventListener('click', function () {
+      loadUsers(false);
+    });
+
+    loadUsers(true);
+  </script>
+</body>
+</html>
