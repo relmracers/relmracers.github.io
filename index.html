@@ -61,7 +61,7 @@
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
-    import { getFirestore, collection, getDocs, query, where, orderBy, limit } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
+    import { getFirestore, collection, getDocs, query, where, orderBy, limit, Timestamp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyBnSJyXgUVsq9RCXi-e2NSqUIapxXfrwPo",
@@ -170,10 +170,20 @@
       setError(false);
 
       try {
+        const startOfToday = new Date();
+        startOfToday.setHours(0, 0, 0, 0);
+        const startOfTomorrow = new Date(startOfToday);
+        startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
+
+        const todayStartTs = Timestamp.fromDate(startOfToday);
+        const todayEndTs = Timestamp.fromDate(startOfTomorrow);
+
         const leaderboardQuery = query(
           collection(db, "leaderboard"),
           where("score", ">", 0),
-          orderBy("score", "desc"),
+          where("createdAt", ">=", todayStartTs),
+          where("createdAt", "<", todayEndTs),
+          orderBy("createdAt", "desc"),
           orderBy("name", "asc"),
           limit(MAX_ENTRIES)
         );
@@ -187,6 +197,11 @@
             name: rawName || 'Anonymous',
             score: Number(data.score) || 0
           });
+        });
+
+        entries.sort(function (a, b) {
+          if (b.score !== a.score) return b.score - a.score;
+          return a.name.localeCompare(b.name);
         });
 
         render();
