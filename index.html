@@ -56,6 +56,8 @@
       </thead>
       <tbody id="leaderboard-body"></tbody>
     </table>
+
+    <button type="button" id="load-more" hidden aria-label="Load more scores">Load more</button>
   </main>
 
   <footer>
@@ -67,7 +69,7 @@
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
-    import { getFirestore, collection, getDocs, query, where, orderBy, limit, Timestamp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
+    import { getFirestore, collection, getDocs, query, where, orderBy, limit, startAfter, Timestamp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyBnSJyXgUVsq9RCXi-e2NSqUIapxXfrwPo",
@@ -87,10 +89,15 @@
     let entries = [];
     let isLoading = false;
     let hasError = false;
+    let allTimeStartRank = 1;
 
     // Day selector state
     const dayWindow = buildDayWindow();
     let selectedDayIndex = 0;
+    let isAllTime = false;
+    let lastDoc = null;
+    let isLoadingMore = false;
+    let hasMoreAllTime = false;
 
     const loadingEl = document.getElementById('loading');
     const errorEl = document.getElementById('error');
@@ -102,6 +109,7 @@
     const dayPrevBtn = document.getElementById('day-prev');
     const dayNextBtn = document.getElementById('day-next');
     const dayLabelEl = document.getElementById('day-label');
+    const loadMoreBtn = document.getElementById('load-more');
 
     function setLoading(loading) {
       isLoading = loading;
@@ -142,7 +150,7 @@
       tableEl.hidden = false;
 
       entries.forEach(function (entry, index) {
-        const rank = index + 1;
+        const rank = allTimeStartRank + index;
         const row = document.createElement('tr');
 
         const rankCell = document.createElement('td');
@@ -190,9 +198,31 @@
     }
 
     function updateDaySelector() {
-      dayLabelEl.textContent = getDayLabel(dayWindow[selectedDayIndex]);
-      dayPrevBtn.disabled = isLoading || selectedDayIndex >= 6;
-      dayNextBtn.disabled = isLoading || selectedDayIndex <= 0;
+      if (isAllTime) {
+        dayLabelEl.textContent = 'All Time';
+        dayPrevBtn.disabled = isLoading;
+        dayPrevBtn.textContent = '◄';
+        dayPrevBtn.setAttribute('aria-label', 'Back to today');
+        dayNextBtn.disabled = true;
+        dayNextBtn.textContent = '';
+        dayNextBtn.setAttribute('aria-label', '');
+      } else if (selectedDayIndex === 0) {
+        dayLabelEl.textContent = 'Today';
+        dayPrevBtn.disabled = isLoading;
+        dayPrevBtn.textContent = '◄';
+        dayPrevBtn.setAttribute('aria-label', 'Previous day');
+        dayNextBtn.disabled = isLoading;
+        dayNextBtn.textContent = 'All Time';
+        dayNextBtn.setAttribute('aria-label', 'Show all time leaderboard');
+      } else {
+        dayLabelEl.textContent = getDayLabel(dayWindow[selectedDayIndex]);
+        dayPrevBtn.disabled = isLoading || selectedDayIndex >= 6;
+        dayPrevBtn.textContent = '◄';
+        dayPrevBtn.setAttribute('aria-label', 'Previous day');
+        dayNextBtn.disabled = isLoading;
+        dayNextBtn.textContent = '►';
+        dayNextBtn.setAttribute('aria-label', 'Next day');
+      }
     }
 
     function fetchForSelectedDay() {
@@ -201,7 +231,13 @@
     }
 
     dayPrevBtn.addEventListener('click', function() {
-      if (selectedDayIndex < 6) {
+      if (isAllTime) {
+        isAllTime = false;
+        lastDoc = null;
+        selectedDayIndex = 0;
+        updateDaySelector();
+        fetchForSelectedDay();
+      } else if (selectedDayIndex < 6) {
         selectedDayIndex++;
         updateDaySelector();
         fetchForSelectedDay();
@@ -209,7 +245,14 @@
     });
 
     dayNextBtn.addEventListener('click', function() {
-      if (selectedDayIndex > 0) {
+      if (isAllTime) return;
+      if (selectedDayIndex === 0) {
+        isAllTime = true;
+        lastDoc = null;
+        entries = [];
+        updateDaySelector();
+        fetchAllTimePage(true);
+      } else {
         selectedDayIndex--;
         updateDaySelector();
         fetchForSelectedDay();
@@ -236,6 +279,7 @@
 
     async function fetchLeaderboard(dayStart, dayEnd) {
       if (isLoading) return;
+      allTimeStartRank = 1;
       setLoading(true);
       setError(false);
 
@@ -269,6 +313,7 @@
           return a.name.localeCompare(b.name);
         });
 
+        loadMoreBtn.hidden = true;
         render();
       } catch (err) {
         console.error('Leaderboard fetch failed:', err);
@@ -279,8 +324,100 @@
       }
     }
 
-    retryButton.addEventListener('click', fetchForSelectedDay);
-    document.getElementById('refresh-button').addEventListener('click', fetchForSelectedDay);
+    async function fetchAllTimePage(reset) {
+      if (reset) {
+        setLoading(true);
+        setError(false);
+        lastDoc = null;
+        entries = [];
+        loadMoreBtn.hidden = true;
+      } else {
+        isLoadingMore = true;
+        loadMoreBtn.disabled = true;
+        loadMoreBtn.textContent = 'Loading...';
+      }
+
+      // Rank offset for the first row of this page: number of entries already loaded
+      // before pushing the new page. After pushing, rank is offset + index.
+      const rankOffset = reset ? 0 : entries.length;
+
+      try {
+        const constraints = [
+          collection(db, "leaderboard"),
+          where("score", ">", 0),
+          orderBy("score", "desc"),
+          orderBy("name", "asc"),
+          limit(MAX_ENTRIES)
+        ];
+
+        if (lastDoc) {
+          constraints.push(startAfter(lastDoc));
+        }
+
+        const allTimeQuery = query(...constraints);
+        const querySnapshot = await withTimeout(getDocs(allTimeQuery), TIMEOUT_MS);
+
+        querySnapshot.forEach(function(doc) {
+          const data = doc.data();
+          const rawName = typeof data.name === 'string' ? data.name.trim() : '';
+          entries.push({
+            name: rawName || 'Anonymous',
+            score: Number(data.score) || 0
+          });
+        });
+
+        const docs = querySnapshot.docs;
+        if (docs.length > 0) {
+          lastDoc = docs[docs.length - 1];
+        }
+
+        // Only offer "Load more" if the page was full (i.e. there might be more).
+        hasMoreAllTime = docs.length === MAX_ENTRIES;
+        allTimeStartRank = rankOffset + 1;
+
+        loadMoreBtn.hidden = !hasMoreAllTime;
+        loadMoreBtn.disabled = false;
+        loadMoreBtn.textContent = 'Load more';
+
+        render();
+      } catch (err) {
+        console.error('All Time fetch failed:', err);
+        if (reset) {
+          entries = [];
+          allTimeStartRank = 1;
+          setError(true);
+        }
+        loadMoreBtn.hidden = true;
+        loadMoreBtn.disabled = false;
+        loadMoreBtn.textContent = 'Load more';
+      } finally {
+        isLoadingMore = false;
+        if (reset) {
+          setLoading(false);
+        }
+      }
+    }
+
+    loadMoreBtn.addEventListener('click', function() {
+      if (!isLoadingMore && hasMoreAllTime) {
+        fetchAllTimePage(false);
+      }
+    });
+
+    retryButton.addEventListener('click', function() {
+      if (isAllTime) {
+        fetchAllTimePage(entries.length === 0);
+      } else {
+        fetchForSelectedDay();
+      }
+    });
+    document.getElementById('refresh-button').addEventListener('click', function() {
+      if (isAllTime) {
+        fetchAllTimePage(true);
+      } else {
+        fetchForSelectedDay();
+      }
+    });
 
     updateDaySelector();
     fetchForSelectedDay();
