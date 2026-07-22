@@ -176,25 +176,75 @@
 
     // --- Day selector ---
 
+    /**
+     * Format a UTC instant as { y, m, d } in America/Los_Angeles.
+     * @param {Date} date
+     * @returns {{ y: number, m: number, d: number }}
+     */
+    function formatPtYmd(date) {
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Los_Angeles',
+        year: 'numeric', month: '2-digit', day: '2-digit'
+      }).formatToParts(date);
+      return {
+        y: parseInt(parts.find(p => p.type === 'year').value, 10),
+        m: parseInt(parts.find(p => p.type === 'month').value, 10),
+        d: parseInt(parts.find(p => p.type === 'day').value, 10)
+      };
+    }
+
+    /**
+     * Return the UTC instant of 00:00:00 America/Los_Angeles on the given PT calendar day.
+     * DST-safe: the offset is discovered for the target date, not hardcoded.
+     * @param {number} ptYear  4-digit year in PT
+     * @param {number} ptMonth 1-12 month in PT
+     * @param {number} ptDay   1-31 day-of-month in PT
+     * @returns {Date} UTC instant
+     */
+    function ptMidnightUtc(ptYear, ptMonth, ptDay) {
+      const candidates = [
+        new Date(Date.UTC(ptYear, ptMonth - 1, ptDay) + 7 * 3600 * 1000), // PDT first
+        new Date(Date.UTC(ptYear, ptMonth - 1, ptDay) + 8 * 3600 * 1000)  // PST second
+      ];
+      const fmt = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Los_Angeles',
+        year: 'numeric', month: '2-digit', day: '2-digit'
+      });
+      for (const candidate of candidates) {
+        const parts = fmt.formatToParts(candidate);
+        const y = parseInt(parts.find(p => p.type === 'year').value, 10);
+        const m = parseInt(parts.find(p => p.type === 'month').value, 10);
+        const d = parseInt(parts.find(p => p.type === 'day').value, 10);
+        if (y === ptYear && m === ptMonth && d === ptDay) return candidate;
+      }
+      throw new Error('ptMidnightUtc: no candidate matched ' + ptYear + '-' + ptMonth + '-' + ptDay);
+    }
+
     function buildDayWindow() {
       const days = [];
-      const now = new Date();
+      const today = formatPtYmd(new Date());
       for (let i = 0; i < 7; i++) {
-        days.push(new Date(now.getFullYear(), now.getMonth(), now.getDate() - i));
+        const approxUtc = new Date(Date.UTC(today.y, today.m - 1, today.d - i + 1));
+        const target = formatPtYmd(approxUtc);
+        days.push(ptMidnightUtc(target.y, target.m, target.d));
       }
       return days;
     }
 
     function nextDayStart(date) {
-      const d = new Date(date);
-      d.setDate(d.getDate() + 1);
-      return d;
+      const today = formatPtYmd(date);
+      const approxUtc = new Date(Date.UTC(today.y, today.m - 1, today.d + 2));
+      const target = formatPtYmd(approxUtc);
+      return ptMidnightUtc(target.y, target.m, target.d);
     }
 
     function getDayLabel(date) {
       if (date.getTime() === dayWindow[0].getTime()) return 'Today';
       if (date.getTime() === dayWindow[1].getTime()) return 'Yesterday';
-      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      return new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/Los_Angeles',
+        month: 'short', day: 'numeric'
+      }).format(date);
     }
 
     function updateDaySelector() {
